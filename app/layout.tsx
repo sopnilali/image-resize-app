@@ -19,8 +19,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
-      <body className={`${inter.className} image-resizer-page`}>
+    <html lang="en" suppressHydrationWarning>
+      <body className={`${inter.className} image-resizer-page`} suppressHydrationWarning>
         <script
           dangerouslySetInnerHTML={{
             __html: `(function(){try{var key='image-resizer-theme';var t=localStorage.getItem(key);if(t==='dark'||t==='light'){document.documentElement.setAttribute('data-theme',t);}else{document.documentElement.removeAttribute('data-theme');}}catch(e){}})();`,

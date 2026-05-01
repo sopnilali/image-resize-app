@@ -548,8 +548,8 @@ export function ImageResizer() {
 
       <div className="advanced-panel-shell panel" hidden={!advancedOpen}>
         <div className="workspace-grid advanced-grid">
-          <div className="stack advanced-col">
-            <div className="advanced-block">
+          <div className="stack advanced-col advanced-col-tight">
+            <div className="advanced-block bg-color-block">
               <h3 className="advanced-title">Quality Settings</h3>
               <label className="stack">
                 <span className="advanced-label">Image Quality</span>
