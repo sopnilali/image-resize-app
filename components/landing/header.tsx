@@ -31,9 +31,9 @@ export function LandingHeader() {
             <Link href="/about" className="navbar-link">
               About
             </Link>
-            <a href="#contact" className="navbar-link">
+            <Link href="/contact" className="navbar-link">
               Contact Us
-            </a>
+            </Link>
           </div>
         </nav>
 

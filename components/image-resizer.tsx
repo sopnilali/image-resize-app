@@ -42,6 +42,7 @@ export function ImageResizer() {
   const [scalePercent, setScalePercent] = useState(100);
   const [format, setFormat] = useState<"image/jpeg" | "image/png" | "image/webp">("image/jpeg");
   const [quality, setQuality] = useState(100);
+  const [clarityMode, setClarityMode] = useState<"standard" | "hd" | "clear">("standard");
   const [stripMeta, setStripMeta] = useState(true);
   const [optimizeWeb, setOptimizeWeb] = useState(false);
   const [targetSizeEnabled, setTargetSizeEnabled] = useState(false);
@@ -54,6 +55,8 @@ export function ImageResizer() {
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState<ResizedFile[]>([]);
   const [error, setError] = useState("");
+  const [estimatedOutputBytes, setEstimatedOutputBytes] = useState<number | null>(null);
+  const [isEstimatingSize, setIsEstimatingSize] = useState(false);
 
   const countLabel = useMemo(() => `${files.length} file${files.length === 1 ? "" : "s"}`, [files.length]);
   const filePreviews = useMemo(
@@ -72,6 +75,11 @@ export function ImageResizer() {
     if (quality <= 89) return "High";
     return "Maximum";
   }, [quality]);
+  const clarityLabel = useMemo(() => {
+    if (clarityMode === "hd") return "HD";
+    if (clarityMode === "clear") return "Clear";
+    return "Standard";
+  }, [clarityMode]);
   const previewFileName = useMemo(() => {
     const extension = format === "image/png" ? "png" : format === "image/webp" ? "webp" : "jpg";
     const sourceName = files[0]?.name ?? "original-name.jpg";
@@ -189,6 +197,96 @@ export function ImageResizer() {
     return value;
   }
 
+  function computeExportQuality() {
+    const baseQuality = Math.max(0.1, Math.min(1, quality / 100));
+    let exportQuality = baseQuality;
+
+    if (isLossyFormat) {
+      if (clarityMode === "hd") exportQuality = Math.max(exportQuality, 0.92);
+      if (clarityMode === "clear") exportQuality = Math.max(exportQuality, 0.97);
+    }
+
+    if (optimizeWeb && format !== "image/png") {
+      exportQuality = Math.min(exportQuality, 0.82);
+    }
+
+    return exportQuality;
+  }
+
+  function applyRenderStyle(ctx: CanvasRenderingContext2D) {
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = clarityMode === "standard" ? (optimizeWeb ? "high" : "medium") : "high";
+    if (clarityMode === "clear") {
+      ctx.filter = "contrast(1.05) saturate(1.03)";
+      return;
+    }
+    ctx.filter = "none";
+  }
+
+  function formatBytes(bytes: number) {
+    if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+    return `${Math.round(bytes / 1024)} KB`;
+  }
+
+  useEffect(() => {
+    let isActive = true;
+
+    async function estimateOutputSize() {
+      if (!files.length) {
+        setEstimatedOutputBytes(null);
+        setIsEstimatingSize(false);
+        return;
+      }
+
+      setIsEstimatingSize(true);
+      try {
+        const sourceImage = await readImage(files[0]);
+        if (!isActive) return;
+
+        const { targetW, targetH } = computeTargetSize(sourceImage.naturalWidth, sourceImage.naturalHeight);
+        const canvas = document.createElement("canvas");
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          if (isActive) setEstimatedOutputBytes(null);
+          return;
+        }
+
+        canvas.width = targetW;
+        canvas.height = targetH;
+        if (bg === "transparent") {
+          ctx.clearRect(0, 0, targetW, targetH);
+        } else {
+          ctx.fillStyle = bg === "black" ? "#000000" : "#ffffff";
+          ctx.fillRect(0, 0, targetW, targetH);
+        }
+
+        applyRenderStyle(ctx);
+        ctx.drawImage(sourceImage, 0, 0, targetW, targetH);
+        ctx.filter = "none";
+
+        const exportQuality = computeExportQuality();
+        const blob = await new Promise<Blob>((resolve, reject) => {
+          canvas.toBlob(
+            (value) => (value ? resolve(value) : reject(new Error("Estimate export failed"))),
+            format,
+            exportQuality,
+          );
+        });
+        if (!isActive) return;
+        setEstimatedOutputBytes(blob.size);
+      } catch {
+        if (isActive) setEstimatedOutputBytes(null);
+      } finally {
+        if (isActive) setIsEstimatingSize(false);
+      }
+    }
+
+    void estimateOutputSize();
+    return () => {
+      isActive = false;
+    };
+  }, [files, width, height, keepRatio, noEnlarge, unit, mode, scalePercent, format, quality, clarityMode, optimizeWeb, bg]);
+
   async function resize() {
     if (!files.length) return;
     setLoading(true);
@@ -226,18 +324,12 @@ export function ImageResizer() {
           ctx.fillStyle = bg === "black" ? "#000000" : "#ffffff";
           ctx.fillRect(0, 0, targetW, targetH);
         }
-        ctx.imageSmoothingEnabled = true;
-        // Prefer higher smoothing when web optimization is enabled.
-        ctx.imageSmoothingQuality = optimizeWeb ? "high" : "medium";
+        // HD/Clear profiles prioritize better resampling quality.
+        applyRenderStyle(ctx);
         ctx.drawImage(image, 0, 0, targetW, targetH);
+        ctx.filter = "none";
 
-        const baseQuality = Math.max(0.1, Math.min(1, quality / 100));
-        let exportQuality = baseQuality;
-
-        // Web optimization keeps lossy outputs around web-friendly quality.
-        if (optimizeWeb && format !== "image/png") {
-          exportQuality = Math.min(exportQuality, 0.82);
-        }
+        let exportQuality = computeExportQuality();
 
         let blob = await canvasToBlob(format, exportQuality);
         if (targetSizeEnabled && targetSizeKb > 0 && isLossyFormat) {
@@ -521,6 +613,10 @@ export function ImageResizer() {
               <span className="summary-v" id="sum-format">{outputFormatLabel}</span>
             </div>
             <div className="summary-row">
+              <span className="summary-k">Clarity mode</span>
+              <span className="summary-v" id="sum-clarity">{clarityLabel}</span>
+            </div>
+            <div className="summary-row">
               <span className="summary-k">Background</span>
               <span className="summary-v" id="sum-bg">
                 {bg === "transparent" ? (format === "image/jpeg" ? "Transparent -> white fill for JPEG" : "Transparent") : bg}
@@ -534,6 +630,12 @@ export function ImageResizer() {
               <span className="summary-k">Target file size</span>
               <span className="summary-v" id="sum-target-size">
                 {targetSizeEnabled ? (isLossyFormat ? `<= ${targetSizeKb} KB` : "N/A for PNG") : "Off"}
+              </span>
+            </div>
+            <div className="summary-row">
+              <span className="summary-k">Estimated output size</span>
+              <span className="summary-v" id="sum-estimated-size">
+                {!files.length ? "Add an image" : isEstimatingSize ? "Estimating..." : estimatedOutputBytes === null ? "Unavailable" : `~ ${formatBytes(estimatedOutputBytes)}`}
               </span>
             </div>
           </div>
@@ -551,6 +653,15 @@ export function ImageResizer() {
           <div className="stack advanced-col advanced-col-tight">
             <div className="advanced-block bg-color-block">
               <h3 className="advanced-title">Quality Settings</h3>
+              <label className="stack">
+                <span className="advanced-label">Image Clarity Profile</span>
+                <select value={clarityMode} onChange={(event) => setClarityMode(event.target.value as "standard" | "hd" | "clear")} className="unit-select">
+                  <option value="standard">Standard</option>
+                  <option value="hd">HD</option>
+                  <option value="clear">Clear</option>
+                </select>
+                <span className="field-hint">HD and Clear keep more detail by using stronger resampling and higher export quality.</span>
+              </label>
               <label className="stack">
                 <span className="advanced-label">Image Quality</span>
                 <div className="quality-row">

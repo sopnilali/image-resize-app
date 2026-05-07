@@ -68,7 +68,7 @@ export function LandingFooter() {
           <div className="stack">
             <Link href="/about">About Us</Link>
             <Link href="/pricing">Pricing</Link>
-            <a href="#contact">Contact</a>
+            <Link href="/contact">Contact</Link>
             <a href="#">Careers</a>
             <a href="#">Affiliate Program</a>
           </div>
@@ -76,8 +76,8 @@ export function LandingFooter() {
         <div>
           <p className="footer-title">Legal</p>
           <div className="stack">
-            <a href="#">Privacy Policy</a>
-            <a href="#">Terms of Service</a>
+            <Link href="/privacy">Privacy Policy</Link>
+            <Link href="/terms">Terms of Service</Link>
             <a href="#">Cookie Policy</a>
             <a href="#">GDPR Compliance</a>
           </div>
@@ -87,8 +87,8 @@ export function LandingFooter() {
       <div className="footer-bottom-bar">
         <p className="footer-muted">© 2026 ImageResizer. All rights reserved.</p>
         <div className="footer-bottom-meta">
-          <a href="#">Privacy Policy</a>
-          <a href="#">Terms of Service</a>
+          <Link href="/privacy">Privacy Policy</Link>
+          <Link href="/terms">Terms of Service</Link>
         </div>
       </div>
       <div id="contact" />
