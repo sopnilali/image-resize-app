@@ -39,9 +39,9 @@ export function LandingHeader() {
 
         <div className="navbar-cta-slot">
           <span className="saas-pill">SAAS</span>
-          <a href="#workspace" className="navbar-cta">
+          <Link href="/#workspace" className="navbar-cta">
             Start Resizing
-          </a>
+          </Link>
           <HeaderThemeToggle />
         </div>
       </div>
