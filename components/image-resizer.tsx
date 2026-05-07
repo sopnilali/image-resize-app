@@ -30,6 +30,7 @@ function FormatTypeIcon({ type }: { type: "jpg" | "png" | "webp" }) {
 export function ImageResizer() {
   const CSS_PPI = 96;
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const qualityBeforeOptimizeRef = useRef<number | null>(null);
   const [files, setFiles] = useState<File[]>([]);
   const [firstImageSize, setFirstImageSize] = useState<{ width: number; height: number } | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
@@ -80,6 +81,23 @@ export function ImageResizer() {
     if (clarityMode === "clear") return "Clear";
     return "Standard";
   }, [clarityMode]);
+  const effectiveQuality = useMemo(() => {
+    if (!isLossyFormat) return null;
+    const baseQuality = Math.max(0.1, Math.min(1, quality / 100));
+    let q = baseQuality;
+    if (clarityMode === "hd") q = Math.max(q, 0.92);
+    if (clarityMode === "clear") q = Math.max(q, 0.97);
+    if (optimizeWeb) q = Math.min(q, 0.82);
+    return Math.round(q * 100);
+  }, [quality, clarityMode, optimizeWeb, isLossyFormat]);
+  const qualityNote = useMemo(() => {
+    if (!isLossyFormat) return "PNG uses lossless export";
+    if (optimizeWeb) return "Web optimize cap: max 82% effective";
+    if (clarityMode === "clear") return "Clear profile floor: min 97% effective";
+    if (clarityMode === "hd") return "HD profile floor: min 92% effective";
+    return "Manual quality control";
+  }, [isLossyFormat, optimizeWeb, clarityMode]);
+  const qualitySliderMax = optimizeWeb && isLossyFormat ? 82 : 100;
   const previewFileName = useMemo(() => {
     const extension = format === "image/png" ? "png" : format === "image/webp" ? "webp" : "jpg";
     const sourceName = files[0]?.name ?? "original-name.jpg";
@@ -117,6 +135,15 @@ export function ImageResizer() {
   useEffect(() => {
     if (isLossyFormat) return;
     setTargetSizeEnabled(false);
+    setOptimizeWeb((prev) => {
+      if (!prev) return prev;
+      const restored = qualityBeforeOptimizeRef.current;
+      if (restored !== null) {
+        setQuality(restored);
+        qualityBeforeOptimizeRef.current = null;
+      }
+      return false;
+    });
   }, [isLossyFormat]);
 
   async function readImage(file: File) {
@@ -264,14 +291,26 @@ export function ImageResizer() {
         ctx.drawImage(sourceImage, 0, 0, targetW, targetH);
         ctx.filter = "none";
 
-        const exportQuality = computeExportQuality();
-        const blob = await new Promise<Blob>((resolve, reject) => {
-          canvas.toBlob(
-            (value) => (value ? resolve(value) : reject(new Error("Estimate export failed"))),
-            format,
-            exportQuality,
-          );
-        });
+        const initialQuality = computeExportQuality();
+        const canvasToBlob = (encoderQuality: number) =>
+          new Promise<Blob>((resolve, reject) => {
+            canvas.toBlob(
+              (value) => (value ? resolve(value) : reject(new Error("Estimate export failed"))),
+              format,
+              encoderQuality,
+            );
+          });
+
+        let blob = await canvasToBlob(initialQuality);
+        if (targetSizeEnabled && targetSizeKb > 0 && isLossyFormat) {
+          const targetBytes = targetSizeKb * 1024;
+          let tunedQuality = initialQuality;
+          while (blob.size > targetBytes && tunedQuality > 0.35) {
+            tunedQuality = Math.max(0.35, tunedQuality - 0.07);
+            blob = await canvasToBlob(tunedQuality);
+            if (!isActive) return;
+          }
+        }
         if (!isActive) return;
         setEstimatedOutputBytes(blob.size);
       } catch {
@@ -285,7 +324,7 @@ export function ImageResizer() {
     return () => {
       isActive = false;
     };
-  }, [files, width, height, keepRatio, noEnlarge, unit, mode, scalePercent, format, quality, clarityMode, optimizeWeb, bg]);
+  }, [files, width, height, keepRatio, noEnlarge, unit, mode, scalePercent, format, quality, clarityMode, optimizeWeb, bg, targetSizeEnabled, targetSizeKb, isLossyFormat]);
 
   async function resize() {
     if (!files.length) return;
@@ -669,25 +708,26 @@ export function ImageResizer() {
                     type="range"
                     className="advanced-range"
                     min={0}
-                    max={100}
-                    step={5}
-                    value={quality}
+                    max={qualitySliderMax}
+                    step={1}
+                    value={Math.min(quality, qualitySliderMax)}
                     disabled={!isLossyFormat}
                     onChange={(event) => setQuality(Number(event.target.value))}
                     style={{
                       background:
-                        quality >= 100
+                        quality >= qualitySliderMax
                           ? "linear-gradient(90deg, #7c3aed 0%, #c026d3 100%)"
-                          : `linear-gradient(90deg, #7c3aed 0%, #c026d3 ${quality}%, rgba(71, 85, 105, 0.55) ${quality}%, rgba(71, 85, 105, 0.55) 100%)`,
+                          : `linear-gradient(90deg, #7c3aed 0%, #c026d3 ${(quality / qualitySliderMax) * 100}%, rgba(71, 85, 105, 0.55) ${(quality / qualitySliderMax) * 100}%, rgba(71, 85, 105, 0.55) 100%)`,
                     }}
                   />
-                  <span className="quality-badge">{isLossyFormat ? `${quality}%` : "N/A"}</span>
+                  <span className="quality-badge">{isLossyFormat ? `${Math.min(quality, qualitySliderMax)}%` : "N/A"}</span>
                 </div>
                 <div className="quality-meta">
                   <span className="quality-chip">{isLossyFormat ? qualityTone : "Lossless"}</span>
-                  <span className="quality-note">
-                    {isLossyFormat ? (optimizeWeb ? "Web optimized cap active" : "Manual quality control") : "PNG uses lossless export"}
-                  </span>
+                  {isLossyFormat && effectiveQuality !== null ? (
+                    <span className="quality-chip">Effective: {effectiveQuality}%</span>
+                  ) : null}
+                  <span className="quality-note">{qualityNote}</span>
                 </div>
                 <div className="quality-scale">
                   <span>Low</span>
@@ -711,11 +751,19 @@ export function ImageResizer() {
                 <input
                   type="checkbox"
                   checked={optimizeWeb}
+                  disabled={!isLossyFormat}
                   onChange={(event) => {
                     const checked = event.target.checked;
                     setOptimizeWeb(checked);
                     if (checked && isLossyFormat) {
+                      qualityBeforeOptimizeRef.current = quality;
                       setQuality((prev) => Math.min(prev, 82));
+                    } else if (!checked) {
+                      const restored = qualityBeforeOptimizeRef.current;
+                      if (restored !== null && restored > quality) {
+                        setQuality(restored);
+                      }
+                      qualityBeforeOptimizeRef.current = null;
                     }
                   }}
                 />
